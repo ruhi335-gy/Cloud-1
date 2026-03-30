@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Tank Battle - Pro Edition</title>
+    <style>
+        :root { --primary: #00f2fe; --danger: #ff416c; --dark: #0f172a; --success: #2ecc71; --gold: #ffd700; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: sans-serif; }
+        
+        /* POPUPS */
+        .popup-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 5000; }
+        .popup-overlay.active { display: flex; }
+        .popup-card { background: var(--dark); padding: 25px; border: 2px solid var(--primary); border-radius: 12px; text-align: center; color: white; min-width: 250px; }
+        
+        /* GAME BOARD (HUD) */
+        #game-hud { 
+            position: absolute; top: 10px; left: 10px; z-index: 1000; display: none;
+            background: rgba(0,0,0,0.7); padding: 8px; border-radius: 6px; 
+            border-left: 3px solid var(--primary); font-size: 11px; color: white; 
+        }
+
+        /* LEVEL GRID FIX */
+        #level-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 5px; padding: 10px; max-height: 140px; overflow-y: auto; }
+        .lvl-dot { width: 25px; height: 25px; background: #334155; display: flex; align-items: center; justify-content: center; font-size: 10px; border-radius: 4px; cursor: pointer; }
+        .lvl-dot.unlocked { background: var(--primary); color: #000; }
+
+        /* SCREENS */
+        .screen { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; background: #0f172a; color: white; z-index: 1000; }
+        .screen.active { display: flex; }
+        .game-btn { padding: 10px 25px; margin: 8px; border: none; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 12px; background: var(--primary); color: #000; }
+
+        #minimap-container { position: absolute; top: 10px; right: 10px; width: 120px; height: 80px; background: rgba(0,0,0,0.8); border: 1.5px solid var(--primary); z-index: 100; display: none; }
+        #controls { position: absolute; bottom: 20px; width: 100%; display: none; justify-content: space-between; padding: 0 40px; box-sizing: border-box; z-index: 100; }
+        .joystick { width: 100px; height: 100px; background: rgba(255,255,255,0.1); border-radius: 50%; position: relative; }
+        .knob { width: 40px; height: 40px; background: var(--primary); border-radius: 50%; position: absolute; top: 30px; left: 30px; }
+        #fire-btn { width: 80px; height: 80px; background: var(--danger); border-radius: 50%; border: none; color: white; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+<div id="name-screen" class="popup-overlay">
+    <div class="popup-card">
+        <h3>PILOT REGISTRATION</h3>
+        <input type="text" id="player-name-input" placeholder="Enter Name" style="padding:10px; width:80%; margin:15px 0; border-radius:5px;">
+        <br>
+        <button class="game-btn" onclick="saveUser()">INITIALIZE</button>
+    </div>
+</div>
+
+<div id="result-screen" class="popup-overlay">
+    <div class="popup-card">
+        <h2 id="res-title"></h2>
+        <p id="res-msg"></p>
+        <button class="game-btn" onclick="location.reload()">MENU</button>
+        <button id="res-next" class="game-btn" style="background:var(--success)">NEXT LEVEL</button>
+    </div>
+</div>
+
+<div id="game-hud">
+    <div style="font-weight:bold; color:var(--primary); margin-bottom:4px;">👤 <span id="hud-name">PILOT</span></div>
+    <div>❤️ HP: <span id="hud-hp">100</span> | 🕒 REGEN: <span id="hud-timer">10s</span></div>
+    <div>🎖️ MODE: <span id="hud-mode">LEVEL</span> | LVL: <span id="hud-lvl">1</span></div>
+    <div>🤖 ENEMY BOTS: <span id="hud-bots">1</span></div>
+</div>
+
+<div id="screen-home" class="screen active">
+    <h1 style="color:var(--primary); letter-spacing:8px;">TANK BATTLE</h1>
+    <button class="game-btn" onclick="showLevels()">MISSIONS</button>
+    <button class="game-btn" style="background:var(--success)" onclick="startLevel(1, true)">QUICK MATCH</button>
+</div>
+
+<div id="screen-levels" class="screen">
+    <h4>MISSIONS</h4>
+    <div id="level-grid"></div>
+    <button class="game-btn" style="background:#444" onclick="location.reload()">BACK</button>
+</div>
+
+<div id="minimap-container"><canvas id="minimap-canvas" width="120" height="80"></canvas></div>
+<canvas id="gameCanvas"></canvas>
+
+<div id="controls">
+    <div class="joystick" id="joy"><div class="knob" id="knob"></div></div>
+    <button id="fire-btn">FIRE</button>
+</div>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const mCanvas = document.getElementById('minimap-canvas');
+const mCtx = mCanvas.getContext('2d');
+
+let player, currentBot, walls = [], bullets = [], particles = [];
+let level = 1, gameState = 'MENU', isQuick = false, regenTimer = 10;
+const WORLD_W = 2000, WORLD_H = 1200;
+let userData = { name: "", unlocked: 1 };
+
+window.onload = () => {
+    let saved = localStorage.getItem('tankProSave');
+    if(saved) { userData = JSON.parse(saved); }
+    else { document.getElementById('name-screen').style.display = 'flex'; }
+};
+
+function saveUser() {
+    let n = document.getElementById('player-name-input').value;
+    if(n.length < 2) return;
+    userData.name = n;
+    localStorage.setItem('tankProSave', JSON.stringify(userData));
+    document.getElementById('name-screen').style.display = 'none';
+}
+
+class Tank {
+    constructor(x, y, color, isBot=false) {
+        this.x = x; this.y = y; this.color = color; this.isBot = isBot;
+        this.angle = 0; this.hp = 100; this.speed = isBot ? 2.5 : 4;
+    }
+    draw(cx, cy) {
+        ctx.save(); ctx.translate(this.x-cx, this.y-cy); ctx.rotate(this.angle);
+        ctx.fillStyle = "#222"; ctx.fillRect(-18, -16, 36, 6); ctx.fillRect(-18, 10, 36, 6);
+        ctx.fillStyle = this.color; ctx.fillRect(-15, -12, 30, 24);
+        ctx.fillStyle = "#000"; ctx.fillRect(0, -2, 25, 4); ctx.restore();
+    }
+}
+
+function startLevel(l, quick=false) {
+    level = l; isQuick = quick; gameState = 'PLAYING'; bullets = [];
+    document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+    document.getElementById('game-hud').style.display = 'block';
+    document.getElementById('minimap-container').style.display = 'block';
+    document.getElementById('controls').style.display = 'flex';
+    document.getElementById('hud-name').innerText = userData.name.toUpperCase();
+    
+    player = new Tank(300, 300, '#00f2fe');
+    walls = [];
+    for(let i=0; i<12; i++) walls.push({x: Math.random()*1600+200, y: Math.random()*800+200, w: 150, h: 30});
+    
+    spawnBot();
+    startRegenTimer();
+    requestAnimationFrame(gameLoop);
+}
+
+function startRegenTimer() {
+    regenTimer = 10;
+    const interval = setInterval(() => {
+        if(gameState !== 'PLAYING') { clearInterval(interval); return; }
+        regenTimer--;
+        document.getElementById('hud-timer').innerText = regenTimer + "s";
+        if(regenTimer <= 0) { player.hp = 100; regenTimer = 10; }
+    }, 1000);
+}
+
+function spawnBot() {
+    let bx, by;
+    do { bx = Math.random()*1800; by = Math.random()*1000; } while(Math.hypot(bx-player.x, by-player.y) < 600);
+    currentBot = new Tank(bx, by, '#ff416c', true);
+}
+
+function endRound(win) {
+    gameState = 'FINISHED';
+    const card = document.getElementById('result-screen');
+    document.getElementById('res-title').innerText = win ? "VICTORY" : "GAME OVER";
+    document.getElementById('res-title').style.color = win ? "var(--success)" : "var(--danger)";
+    document.getElementById('res-msg').innerText = win ? "Enemy tank destroyed!" : "Your tank was blasted!";
+    document.getElementById('res-next').style.display = win ? "inline-block" : "none";
+    
+    if(win && level == userData.unlocked) { userData.unlocked++; localStorage.setItem('tankProSave', JSON.stringify(userData)); }
+    document.getElementById('res-next').onclick = () => { card.classList.remove('active'); startLevel(level+1); };
+    card.classList.add('active');
+}
+
+function gameLoop() {
+    if(gameState !== 'PLAYING') return;
+    let camX = player.x - canvas.width/2;
+    let camY = player.y - canvas.height/2;
+
+    ctx.fillStyle = "#0f172a"; ctx.fillRect(0,0,canvas.width, canvas.height);
+    ctx.fillStyle = "#1e293b"; walls.forEach(w => ctx.fillRect(w.x-camX, w.y-camY, w.w, w.h));
+
+    if(moveDir.x || moveDir.y) {
+        let nx=player.x+moveDir.x*player.speed, ny=player.y+moveDir.y*player.speed;
+        let col=false; walls.forEach(w=>{if(nx+15>w.x && nx-15<w.x+w.w && ny+15>w.y && ny-15<w.y+w.h) col=true;});
+        if(!col && nx>0 && nx<WORLD_W && ny>0 && ny<WORLD_H) { player.x=nx; player.y=ny; player.angle=Math.atan2(moveDir.y, moveDir.x); }
+    }
+    player.draw(camX, camY);
+
+    if(currentBot) {
+        let dx=player.x-currentBot.x, dy=player.y-currentBot.y, d=Math.hypot(dx,dy);
+        currentBot.angle = Math.atan2(dy,dx);
+        if(d>250) { currentBot.x+=(dx/d)*currentBot.speed; currentBot.y+=(dy/d)*currentBot.speed; }
+        currentBot.draw(camX, camY);
+        if(Math.random()<0.02) fire(currentBot);
+    }
+
+    bullets = bullets.filter(b => {
+        b.x += b.vx; b.y += b.vy;
+        ctx.fillStyle = b.bot ? 'red' : 'white';
+        ctx.beginPath(); ctx.arc(b.x-camX, b.y-camY, 4, 0, 7); ctx.fill();
+
+        walls.forEach(w => {
+            if(b.x>w.x && b.x<w.x+w.w && b.y>w.y && b.y<w.y+w.h) {
+                if(Math.abs(b.x-w.x)<10 || Math.abs(b.x-(w.x+w.w))<10) b.vx*=-1; else b.vy*=-1;
+                b.bounces++;
+            }
+        });
+        if(b.x<0 || b.x>WORLD_W) { b.vx*=-1; b.bounces++; }
+        if(b.y<0 || b.y>WORLD_H) { b.vy*=-1; b.bounces++; }
+
+        if(!b.bot && currentBot && Math.hypot(b.x-currentBot.x, b.y-currentBot.y)<20) {
+            currentBot.hp-=34; b.bounces=10;
+            if(currentBot.hp<=0) { bullets=bullets.filter(blt=>!blt.bot); endRound(true); }
+            return false;
+        }
+        if(b.bot && Math.hypot(b.x-player.x, b.y-player.y)<20) {
+            player.hp-=34; b.bounces=10;
+            if(player.hp<=0) { bullets=bullets.filter(blt=>blt.bot); endRound(false); }
+            return false;
+        }
+        return b.bounces <= 5;
+    });
+
+    // Update HUD
+    document.getElementById('hud-hp').innerText = Math.ceil(player.hp);
+    document.getElementById('hud-lvl').innerText = level;
+    document.getElementById('hud-mode').innerText = isQuick ? "QUICK" : "LEVEL";
+    document.getElementById('hud-bots').innerText = currentBot ? 1 : 0;
+
+    drawMiniMap();
+    requestAnimationFrame(gameLoop);
+}
+
+function fire(t) { bullets.push({x:t.x, y:t.y, vx:Math.cos(t.angle)*12, vy:Math.sin(t.angle)*12, bot:t.isBot, bounces:0}); }
+
+function drawMiniMap() {
+    mCtx.fillStyle = "black"; mCtx.fillRect(0,0,120,80);
+    let sx=120/WORLD_W, sy=80/WORLD_H;
+    mCtx.fillStyle="#444"; walls.forEach(w => mCtx.fillRect(w.x*sx, w.y*sy, w.w*sx, w.h*sy));
+    mCtx.fillStyle=player.color; mCtx.fillRect(player.x*sx-2, player.y*sy-2, 4, 4);
+    if(currentBot) { mCtx.fillStyle=currentBot.color; mCtx.fillRect(currentBot.x*sx-2, currentBot.y*sy-2, 4, 4); }
+}
+
+function showLevels() {
+    const grid = document.getElementById('level-grid'); grid.innerHTML = '';
+    for(let i=1; i<=100; i++) {
+        let d = document.createElement('div'); d.className = 'lvl-dot ' + (i<=userData.unlocked?'unlocked':'');
+        d.innerText = i; if(i<=userData.unlocked) d.onclick = () => startLevel(i);
+        grid.appendChild(d);
+    }
+    document.getElementById('screen-home').classList.remove('active');
+    document.getElementById('screen-levels').classList.add('active');
+}
+
+let moveDir = {x:0, y:0};
+joy.addEventListener('touchmove', (e) => {
+    e.preventDefault(); let t=e.touches[0], r=joy.getBoundingClientRect();
+    let dx=t.clientX-(r.left+50), dy=t.clientY-(r.top+50);
+    let d=Math.min(Math.hypot(dx,dy), 40), ang=Math.atan2(dy,dx);
+    document.getElementById('knob').style.transform = `translate(${Math.cos(ang)*d}px, ${Math.sin(ang)*d}px)`;
+    moveDir = {x:Math.cos(ang), y:Math.sin(ang)};
+});
+joy.addEventListener('touchend', () => { document.getElementById('knob').style.transform='none'; moveDir={x:0, y:0}; });
+document.getElementById('fire-btn').addEventListener('touchstart', (e) => { e.preventDefault(); fire(player); });
+
+window.onresize = () => { canvas.width=window.innerWidth; canvas.height=window.innerHeight; };
+canvas.width=window.innerWidth; canvas.height=window.innerHeight;
+</script>
+</body>
+</html>
+
+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
