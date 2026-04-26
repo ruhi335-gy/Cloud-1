@@ -1,0 +1,15 @@
+const firebaseConfig = {
+  apiKey: "AIzaSyCJWEH5UV6OesKSfNM_A65u_8nqk-dorX4",
+  authDomain: "web-cloud-201fe.firebaseapp.com",
+  databaseURL: "https://web-cloud-201fe-default-rtdb.firebaseio.com",
+  projectId: "web-cloud-201fe",
+  storageBucket: "web-cloud-201fe.firebasestorage.app",
+  messagingSenderId: "341392451232",
+  appId: "1:341392451232:web:7d6af9d3b3ac7fac218bc5",
+  measurementId: "G-F0T2B3VGYN"
+};
+
+
+ruhi335-gy/Chat-cloud
+
+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
